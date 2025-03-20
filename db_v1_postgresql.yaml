@@ -1,0 +1,13 @@
+apiVersion: db.example.com/v1
+kind: Postgresql
+metadata:
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/instance: postgresql-sample
+    app.kubernetes.io/part-of: postgresql-kubebuilder
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: postgresql-kubebuilder
+  name: postgresql-sample
+spec:
+  postgresVersion: 15.4.0-debian-11-r10
+  postgresqlPassword: "1qaz2E"

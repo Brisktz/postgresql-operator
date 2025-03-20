@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Name }}
+  namespace: {{ .Namespace }}
+  labels:
+{{- range $key, $value := .Labels }}
+    {{ $key }}: {{ $value }}
+{{- end }}
+spec:
+  template:
+    metadata:
+      labels:
+{{- range $key, $value := .Labels }}
+        {{ $key }}: {{ $value }}
+{{- end }}
+    spec:
+      containers:
+      - name: postgresql-pgdumpall
+        image: docker.io/bitnami/postgresql:{{ .PostgresqlVersion }}
+        env:
+          - name: PGUSER
+            value: postgres
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ .SecretName }}
+                key: postgres-password
+          - name: PGHOST
+            value: {{ .ServiceName }}
+          - name: PGPORT
+            value: "5432"
+          - name: PGDUMP_DIR
+            value: /backup/pgdump
+        command:
+        - /bin/sh
+        - -c
+        - pg_dumpall --clean --if-exists --load-via-partition-root --quote-all-identifiers --no-password --file=${PGDUMP_DIR}/{{ .BackupName }}.pgdump
+        volumeMounts:
+          - name: datadir
+            mountPath: /backup/pgdump
+            subPath:
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 0
+          runAsNonRoot: true
+          runAsUser: 1001
+          seccompProfile:
+            type: RuntimeDefault
+      restartPolicy: OnFailure
+      volumes:
+        - name: datadir
+          persistentVolumeClaim:
+            claimName: {{ .PVCName }}
