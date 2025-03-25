@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -80,6 +81,66 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		pg.Status.Conditions = make([]metav1.Condition, 0, 4)
 	}
 
+	if result, err := r.dealWithSecret(ctx, req, pg, logger, objectMeta); err != nil {
+		return result, err
+	}
+
+	if result, err := r.dealWithServiceHl(ctx, req, pg, logger, objectMeta); err != nil {
+		return result, err
+	}
+
+	if result, err := r.dealWithService(ctx, req, pg, logger, objectMeta); err != nil {
+		return result, err
+	}
+
+	if result, err := r.dealWithStatefulSet(ctx, req, pg, logger, objectMeta); err != nil {
+		return result, err
+	}
+
+	logger.Info("Reconcile finished")
+
+	return ctrl.Result{}, nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *PostgresqlReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&dbv1.Postgresql{}).
+		Owns(&corev1.Service{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Secret{}).
+		Named("postgresql").
+		Complete(r)
+}
+
+func setConditions(conditions []metav1.Condition, condition metav1.Condition) []metav1.Condition {
+	for i, c := range conditions {
+		if c.Type == condition.Type {
+			if c.Status != condition.Status || c.Reason != condition.Reason {
+				conditions[i].LastTransitionTime = metav1.Now()
+			} else {
+				conditions[i].LastTransitionTime = c.LastTransitionTime
+			}
+			conditions[i] = condition
+			return conditions
+		}
+	}
+	conditions = append(conditions, condition)
+	return conditions
+}
+
+func newCondition(conditionType string, statusValue metav1.ConditionStatus, reason, message string) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               conditionType,
+		Status:             statusValue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+	return condition
+}
+
+func (r *PostgresqlReconciler) dealWithSecret(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger, objectMeta *metav1.ObjectMeta) (ctrl.Result, error) {
 	// 创建或更新Secret对象
 	logger.Info("Get secret object")
 	secret := new(corev1.Secret)
@@ -142,6 +203,10 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
+	return ctrl.Result{}, nil
+}
+
+func (r *PostgresqlReconciler) dealWithServiceHl(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger, objectMeta *metav1.ObjectMeta) (ctrl.Result, error) {
 	// 创建或更新Service Headless
 	logger.Info("Get service headless Object")
 	svcHeadless := new(corev1.Service)
@@ -213,7 +278,10 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 	}
+	return ctrl.Result{}, nil
+}
 
+func (r *PostgresqlReconciler) dealWithService(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger, objectMeta *metav1.ObjectMeta) (ctrl.Result, error) {
 	// 创建或更新Service
 	logger.Info("Get service object")
 	svc := new(corev1.Service)
@@ -277,6 +345,10 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 	}
+	return ctrl.Result{}, nil
+}
+
+func (r *PostgresqlReconciler) dealWithStatefulSet(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger, objectMeta *metav1.ObjectMeta) (ctrl.Result, error) {
 	// 创建或更新StatefulSet
 	logger.Info("Get statefulSet object")
 	sts := new(appsv1.StatefulSet)
@@ -364,50 +436,5 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			}
 		}
 	}
-
-	logger.Info("Reconcile finished")
-
 	return ctrl.Result{}, nil
 }
-
-// SetupWithManager sets up the controller with the Manager.
-func (r *PostgresqlReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&dbv1.Postgresql{}).
-		Owns(&corev1.Service{}).
-		Owns(&appsv1.StatefulSet{}).
-		Owns(&corev1.Secret{}).
-		Named("postgresql").
-		Complete(r)
-}
-
-func setConditions(conditions []metav1.Condition, condition metav1.Condition) []metav1.Condition {
-	for i, c := range conditions {
-		if c.Type == condition.Type {
-			if c.Status != condition.Status || c.Reason != condition.Reason {
-				conditions[i].LastTransitionTime = metav1.Now()
-			} else {
-				conditions[i].LastTransitionTime = c.LastTransitionTime
-			}
-			conditions[i] = condition
-			return conditions
-		}
-	}
-	conditions = append(conditions, condition)
-	return conditions
-}
-
-func newCondition(conditionType string, statusValue metav1.ConditionStatus, reason, message string) metav1.Condition {
-	condition := metav1.Condition{
-		Type:               conditionType,
-		Status:             statusValue,
-		LastTransitionTime: metav1.Now(),
-		Reason:             reason,
-		Message:            message,
-	}
-	return condition
-}
-
-//func (r *PostgresqlReconciler)dealWithSecret(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger) error {
-//
-//}
