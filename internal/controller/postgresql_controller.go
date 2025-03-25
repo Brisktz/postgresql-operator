@@ -71,15 +71,7 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	objectMeta := pg.ObjectMeta.DeepCopy()
 	objectMeta.ResourceVersion = ""
 
-	// 设置Status开始时间
-	if pg.Status.StartTime == nil {
-		pg.Status.StartTime = &metav1.Time{Time: time.Now()}
-	}
-
-	// 初始化Conditions
-	if pg.Status.Conditions == nil {
-		pg.Status.Conditions = make([]metav1.Condition, 0, 4)
-	}
+	initPGStatus(pg)
 
 	if result, err := r.dealWithSecret(ctx, req, pg, logger, objectMeta); err != nil {
 		return result, err
@@ -89,7 +81,7 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return result, err
 	}
 
-	if result, err := r.dealWithService(ctx, req, pg, logger, objectMeta); err != nil {
+	if result, err := r.dealWithService(ctx, req, pg, logger, objectMeta); err != nil || result.Requeue || result.RequeueAfter > 0 {
 		return result, err
 	}
 
@@ -111,6 +103,18 @@ func (r *PostgresqlReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Named("postgresql").
 		Complete(r)
+}
+
+func initPGStatus(pg *dbv1.Postgresql) {
+	// 设置Status开始时间
+	if pg.Status.StartTime == nil {
+		pg.Status.StartTime = &metav1.Time{Time: time.Now()}
+	}
+
+	// 初始化Conditions
+	if pg.Status.Conditions == nil {
+		pg.Status.Conditions = make([]metav1.Condition, 0, 4)
+	}
 }
 
 func setConditions(conditions []metav1.Condition, condition metav1.Condition) []metav1.Condition {
