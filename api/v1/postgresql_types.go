@@ -48,10 +48,10 @@ type PostgresqlStatus struct {
 
 // postgresql type
 const (
-	PostgresqlSecretReady      string = "PostgresqlSecretReady"
-	PostgresqlServiceHeadless  string = "PostgresqlServiceHeadless"
-	PostgresqlServiceReady     string = "PostgresqlServiceReady"
-	PostgresqlStatefulSetReady string = "PostgresqlStatefulSetReady"
+	PostgresqlSecretReady          string = "PostgresqlSecretReady"
+	PostgresqlServiceHeadlessReady string = "PostgresqlServiceHeadless"
+	PostgresqlServiceReady         string = "PostgresqlServiceReady"
+	PostgresqlStatefulSetReady     string = "PostgresqlStatefulSetReady"
 )
 
 // +kubebuilder:object:root=true

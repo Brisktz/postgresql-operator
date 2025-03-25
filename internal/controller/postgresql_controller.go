@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"fmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"text/template"
+	"time"
 
 	dbv1 "example.com/postgresql/api/v1"
 )
@@ -68,6 +70,16 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	objectMeta := pg.ObjectMeta.DeepCopy()
 	objectMeta.ResourceVersion = ""
 
+	// 设置Status开始时间
+	if pg.Status.StartTime == nil {
+		pg.Status.StartTime = &metav1.Time{Time: time.Now()}
+	}
+
+	// 初始化Conditions
+	if pg.Status.Conditions == nil {
+		pg.Status.Conditions = make([]metav1.Condition, 0, 4)
+	}
+
 	// 创建或更新Secret对象
 	logger.Info("Get secret object")
 	secret := new(corev1.Secret)
@@ -85,21 +97,46 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 					"postgres-password": []byte(pg.Spec.PostgresqlPassword),
 				},
 			}
+
+			// 设置ControllerReference
+			if err := ctrl.SetControllerReference(pg, newSecret, r.Scheme); err != nil {
+				logger.Error(err, "Failed to set controller reference")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, newSecret); err != nil {
 				logger.Error(err, "Failed to create secret")
 				return ctrl.Result{}, err
 			}
+
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlSecretReady, metav1.ConditionTrue, "CreateSecret", fmt.Sprintf("Secret %s%s 创建成功", newSecret.Namespace, newSecret.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
+				return ctrl.Result{}, err
+			}
+
 		} else {
 			logger.Error(err, "Failed to get Secret Object")
 			return ctrl.Result{}, err
 		}
 	} else {
 		logger.Info("Update secret object")
+		reason := "CreateSecret"
 		encodeSecret := base64.StdEncoding.EncodeToString([]byte(pg.Spec.PostgresqlPassword))
 		if string(secret.Data["postgres-password"]) != encodeSecret {
 			secret.Data["postgres-password"] = []byte(pg.Spec.PostgresqlPassword)
+			reason = "UpdateSecret"
 			if err := r.Update(ctx, secret); err != nil {
 				logger.Error(err, "Failed to update secret")
+				return ctrl.Result{}, err
+			}
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlSecretReady, metav1.ConditionTrue, reason, fmt.Sprintf("Secret %s%s 更新成功", secret.Namespace, secret.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
 				return ctrl.Result{}, err
 			}
 		}
@@ -145,8 +182,22 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 					},
 				},
 			}
+
+			if err := ctrl.SetControllerReference(pg, newSvcHeadless, r.Scheme); err != nil {
+				logger.Error(err, "Failed to set controller reference")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, newSvcHeadless); err != nil {
 				logger.Error(err, "Failed to create headless service")
+				return ctrl.Result{}, err
+			}
+
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlServiceHeadlessReady, metav1.ConditionTrue, "CreateServiceHl", fmt.Sprintf("Service Headless %s%s 创建成功", newSvcHeadless.Namespace, newSvcHeadless.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
 				return ctrl.Result{}, err
 			}
 		} else {
@@ -155,6 +206,12 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	} else {
 		logger.Info("Update headless service")
+		condition := newCondition(dbv1.PostgresqlServiceHeadlessReady, metav1.ConditionTrue, "CreateServiceHl", fmt.Sprintf("Service Headless %s%s 创建成功", svcHeadless.Namespace, svcHeadless.Name))
+		pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+		if err := r.Status().Update(ctx, pg); err != nil {
+			logger.Error(err, "Failed to update postgresql status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 创建或更新Service
@@ -189,8 +246,22 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 					},
 				},
 			}
+
+			if err := ctrl.SetControllerReference(pg, newSvc, r.Scheme); err != nil {
+				logger.Error(err, "Failed to set controller reference")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, newSvc); err != nil {
 				logger.Error(err, "Failed to create service")
+				return ctrl.Result{}, err
+			}
+
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlServiceReady, metav1.ConditionTrue, "CreateService", fmt.Sprintf("Service %s%s 创建成功", newSvc.Namespace, newSvc.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
 				return ctrl.Result{}, err
 			}
 		} else {
@@ -199,6 +270,12 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	} else {
 		logger.Info("Update service")
+		condition := newCondition(dbv1.PostgresqlServiceReady, metav1.ConditionTrue, "CreateService", fmt.Sprintf("Service %s%s 创建成功", svc.Namespace, svc.Name))
+		pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+		if err := r.Status().Update(ctx, pg); err != nil {
+			logger.Error(err, "Failed to update postgresql status")
+			return ctrl.Result{}, err
+		}
 	}
 	// 创建或更新StatefulSet
 	logger.Info("Get statefulSet object")
@@ -232,10 +309,25 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			obj, _, err := decode(buf.Bytes(), nil, nil)
 			// 强制转换
 			newSts := obj.(*appsv1.StatefulSet)
+
+			if err := ctrl.SetControllerReference(pg, newSts, r.Scheme); err != nil {
+				logger.Error(err, "Failed to set controller reference")
+				return ctrl.Result{}, err
+			}
+
 			if err := r.Create(ctx, newSts); err != nil {
 				logger.Error(err, "Failed to create statefulSet")
 				return ctrl.Result{}, err
 			}
+
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlStatefulSetReady, metav1.ConditionUnknown, "CreateStatefulSet", fmt.Sprintf("StatefulSet %s%s 创建成功", newSts.Namespace, newSts.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
+				return ctrl.Result{}, err
+			}
+			// 重新进入Reconcile循环
 		} else {
 			logger.Error(err, "Failed to get StatefulSet")
 			return ctrl.Result{}, err
@@ -246,6 +338,28 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			sts.Spec.Template.Spec.Containers[0].Image = "docker.io/bitnami/postgresql:" + pg.Spec.PostgresVersion
 			if err := r.Update(ctx, sts); err != nil {
 				logger.Error(err, "Failed to update statefulSet")
+				return ctrl.Result{}, err
+			}
+
+			// 设置Status的Condition
+			condition := newCondition(dbv1.PostgresqlStatefulSetReady, metav1.ConditionUnknown, "UpdateStatefulSet", fmt.Sprintf("StatefulSet %s%s 创建成功", sts.Namespace, sts.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
+				return ctrl.Result{}, err
+			}
+		}
+		// 判断当前的statefulSet是否完成更新
+		// 如果没有完成，重新进入循环
+		if sts.Status.CurrentReplicas != sts.Status.Replicas {
+			logger.Info("StatefulSet is updating")
+			return ctrl.Result{RequeueAfter: time.Second * 10}, nil
+		} else {
+			logger.Info("StatefulSet is updated completely")
+			condition := newCondition(dbv1.PostgresqlStatefulSetReady, metav1.ConditionTrue, "CreateStatefulSet", fmt.Sprintf("StatefulSet %s%s 创建成功", sts.Namespace, sts.Name))
+			pg.Status.Conditions = setConditions(pg.Status.Conditions, condition)
+			if err := r.Status().Update(ctx, pg); err != nil {
+				logger.Error(err, "Failed to update postgresql status")
 				return ctrl.Result{}, err
 			}
 		}
@@ -260,6 +374,40 @@ func (r *PostgresqlReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 func (r *PostgresqlReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&dbv1.Postgresql{}).
+		Owns(&corev1.Service{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Secret{}).
 		Named("postgresql").
 		Complete(r)
 }
+
+func setConditions(conditions []metav1.Condition, condition metav1.Condition) []metav1.Condition {
+	for i, c := range conditions {
+		if c.Type == condition.Type {
+			if c.Status != condition.Status || c.Reason != condition.Reason {
+				conditions[i].LastTransitionTime = metav1.Now()
+			} else {
+				conditions[i].LastTransitionTime = c.LastTransitionTime
+			}
+			conditions[i] = condition
+			return conditions
+		}
+	}
+	conditions = append(conditions, condition)
+	return conditions
+}
+
+func newCondition(conditionType string, statusValue metav1.ConditionStatus, reason, message string) metav1.Condition {
+	condition := metav1.Condition{
+		Type:               conditionType,
+		Status:             statusValue,
+		LastTransitionTime: metav1.Now(),
+		Reason:             reason,
+		Message:            message,
+	}
+	return condition
+}
+
+//func (r *PostgresqlReconciler)dealWithSecret(ctx context.Context, req ctrl.Request, pg *dbv1.Postgresql, logger logr.Logger) error {
+//
+//}
